@@ -1,0 +1,17 @@
+[package]
+name = "skeleton-depth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT"
+description = "Pure-Rust upper-body skeleton tracker from a depth silhouette (head, shoulders, hands) — no OpenCV, no OpenNI."
+repository = "https://github.com/Le-Syl21/SkeletonDepth-rs"
+readme = "README.md"
+keywords = ["depth", "kinect", "skeleton", "pose"]
+categories = ["computer-vision"]
+exclude = ["/.github"]
+
+[dependencies]
+
+[lib]
+name = "skeleton_depth"
