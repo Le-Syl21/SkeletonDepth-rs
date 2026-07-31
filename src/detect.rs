@@ -228,3 +228,109 @@ pub fn pick_left_hand(
 pub fn is_present(p: Pt) -> bool {
     present(p)
 }
+
+/// Collect the thinned-skeleton pixels that make up one arm (`getSkeletonArm`):
+/// every foreground column of `thinned` on the outer side of the body centre
+/// (`center_ws ± afa*1.2`), returned in the mask's sub-sampled coordinates.
+/// These feed the bent-arm elbow fallback.
+pub fn skeleton_arm(thinned: &Mask, center_ws: i32, afa: i32, right: bool) -> Vec<Pt> {
+    let w = thinned.w as i32;
+    let h = thinned.h as i32;
+    let band = (afa as f32 * 1.2) as i32;
+    let (mut x, end, step) = if right {
+        ((center_ws + band).min(w - 1), w, 1i32)
+    } else {
+        ((center_ws - band).max(0), 0, -1i32)
+    };
+    let mut pts = Vec::new();
+    while x != end {
+        for y in 0..h {
+            if thinned.is_fg(x, y) {
+                pts.push(Pt::new(x, y));
+            }
+        }
+        x += step;
+    }
+    pts
+}
+
+/// Locate one elbow. Case 1 (straight arm): the shoulder↔hand midpoint if it
+/// sits on the body and the midpoint→shoulder segment stays inside — nudged
+/// ±10 px in `y` to land on the silhouette. Case 2 (bent arm): the arm-skeleton
+/// point whose segments to both the hand and the shoulder fall least outside the
+/// body. Joint points are full-resolution; `binarized` is the sub-sampled mask.
+pub fn pick_elbow(arm: &[Pt], hand: Pt, shoulder: Pt, binarized: &Mask, sub: i32) -> Pt {
+    if !present(hand) || !present(shoulder) {
+        return ABSENT;
+    }
+    let sub_pt = |p: Pt| Pt::new(p.x / sub, p.y / sub);
+    let mid = Pt::new((hand.x + shoulder.x) / 2, (hand.y + shoulder.y) / 2);
+    let shoulder_s = sub_pt(shoulder);
+    let hand_s = sub_pt(hand);
+
+    // Case 1 — straight arm.
+    if binarized.count_line_outside(sub_pt(mid), shoulder_s) < 10 {
+        let col = mid.x / sub;
+        if binarized.is_fg(col, mid.y / sub) {
+            return mid;
+        } else if binarized.is_fg(col, (mid.y + 10) / sub) {
+            return Pt::new(mid.x, mid.y + 10);
+        } else if binarized.is_fg(col, (mid.y - 10) / sub) {
+            return Pt::new(mid.x, mid.y - 10);
+        }
+    }
+
+    // Case 2 — bent arm: minimise line-outside to both hand and shoulder.
+    let mut best = ABSENT;
+    let mut best_cost = usize::MAX;
+    for &ap in arm {
+        let cost =
+            binarized.count_line_outside(ap, hand_s) + binarized.count_line_outside(ap, shoulder_s);
+        if cost < best_cost {
+            best_cost = cost;
+            best = Pt::new(ap.x * sub, ap.y * sub);
+        }
+    }
+    best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mask::{Mask, FG};
+
+    #[test]
+    fn skeleton_arm_collects_outer_columns() {
+        // center column 20, afa 5 -> right arm starts at 20 + 6 = 26.
+        let mut m = Mask::new(40, 40);
+        m.set(30, 10, FG);
+        m.set(31, 11, FG);
+        m.set(15, 10, FG); // left of centre: must be ignored by the right arm
+        let arm = skeleton_arm(&m, 20, 5, true);
+        assert!(!arm.is_empty(), "right arm found");
+        assert!(arm.iter().all(|p| p.x >= 26), "only outer-right columns");
+        assert!(arm.iter().any(|p| p.x == 30 && p.y == 10));
+    }
+
+    #[test]
+    fn elbow_straight_arm_takes_midpoint() {
+        // sub=4. hand (200,100), shoulder (100,100) -> mid (150,100) -> sub (37,25).
+        // A horizontal FG bar on row 25 makes the mid->shoulder line fully inside
+        // and the midpoint itself foreground, so case 1 returns the midpoint.
+        let mut m = Mask::new(50, 50);
+        for x in 24..40 {
+            m.set(x, 25, FG);
+        }
+        let elbow = pick_elbow(&[], Pt::new(200, 100), Pt::new(100, 100), &m, 4);
+        assert_eq!(elbow, Pt::new(150, 100));
+    }
+
+    #[test]
+    fn elbow_absent_without_hand_or_shoulder() {
+        let m = Mask::new(10, 10);
+        assert_eq!(
+            pick_elbow(&[], Pt::new(0, 0), Pt::new(4, 4), &m, 4),
+            Pt::new(0, 0)
+        );
+    }
+}

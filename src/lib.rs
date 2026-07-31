@@ -36,7 +36,8 @@ pub mod segment;
 pub mod smooth;
 
 use detect::{
-    is_present, locate_extremities, locate_shoulders, pick_left_hand, pick_right_hand, scale,
+    is_present, locate_extremities, locate_shoulders, pick_elbow, pick_left_hand, pick_right_hand,
+    scale, skeleton_arm,
 };
 use geom::Pt;
 use mask::Mask;
@@ -108,6 +109,9 @@ pub struct Config {
     pub shoulder_drop: i32,
     /// "Go inside the arm" vertical nudge applied to shoulders (sub-sampled rows).
     pub shoulder_inset: i32,
+    /// Thinned-skeleton components smaller than this (pixels) are pruned as spurs
+    /// before the extremity scan (`removeSmallsRegions`).
+    pub min_region_px: u32,
     /// Temporal median window (frames) per joint.
     pub history: usize,
 }
@@ -120,6 +124,7 @@ impl Default for Config {
             afa: 0,
             shoulder_drop: 30,
             shoulder_inset: 10,
+            min_region_px: 6,
             history: 5,
         }
     }
@@ -206,8 +211,14 @@ impl Tracker {
         let center_ws = center_sub.x; // sub-sampled centre column
         let center_full = Pt::new(center_sub.x * subi, center_sub.y * subi);
 
+        // Thin the silhouette to a 1-px skeleton whose endpoints are the limb
+        // tips; the extremity scan and the arm tracing both run on it (the
+        // shoulders and elbows still read the solid `mask`).
+        let mut skel = mask.thinned();
+        skel.remove_small_regions(self.cfg.min_region_px);
+
         // Extremities → head + hand candidates (scaled to full resolution).
-        let e = locate_extremities(&mask, center_ws, self.afa);
+        let e = locate_extremities(&skel, center_ws, self.afa);
         let max_right = scale(e.right, subi);
         let max_left = scale(e.left, subi);
         let max_top_center = scale(e.top_center, subi);
@@ -218,7 +229,7 @@ impl Tracker {
 
         let head = max_top_center;
 
-        // Shoulders (need the head row to start the scan).
+        // Shoulders (need the head row to start the scan); scanned on the solid mask.
         let (r_shoulder, l_shoulder) = locate_shoulders(
             &mask,
             center_ws,
@@ -249,10 +260,18 @@ impl Tracker {
             SHIFT,
         );
 
+        // Elbows: straight-arm midpoint, or the arm-skeleton bend point.
+        let right_arm = skeleton_arm(&skel, center_ws, self.afa, true);
+        let left_arm = skeleton_arm(&skel, center_ws, self.afa, false);
+        let r_elbow = pick_elbow(&right_arm, r_hand, r_shoulder, &mask, subi);
+        let l_elbow = pick_elbow(&left_arm, l_hand, l_shoulder, &mask, subi);
+
         self.publish(RawJoints {
             head,
             l_shoulder,
             r_shoulder,
+            l_elbow,
+            r_elbow,
             l_hand,
             r_hand,
             center: center_full,
@@ -287,9 +306,8 @@ impl Tracker {
             head: smooth(&mut self.rings[jid::HEAD], raw.head),
             left_shoulder: smooth(&mut self.rings[jid::L_SHOULDER], raw.l_shoulder),
             right_shoulder: smooth(&mut self.rings[jid::R_SHOULDER], raw.r_shoulder),
-            // Elbows: not implemented yet (roadmap). Feed None so they stay clear.
-            left_elbow: self.rings[jid::L_ELBOW].update(None).map(joint_from),
-            right_elbow: self.rings[jid::R_ELBOW].update(None).map(joint_from),
+            left_elbow: smooth(&mut self.rings[jid::L_ELBOW], raw.l_elbow),
+            right_elbow: smooth(&mut self.rings[jid::R_ELBOW], raw.r_elbow),
             left_hand: smooth(&mut self.rings[jid::L_HAND], raw.l_hand),
             right_hand: smooth(&mut self.rings[jid::R_HAND], raw.r_hand),
             center: smooth(&mut self.rings[jid::CENTER], raw.center),
@@ -303,20 +321,14 @@ impl Tracker {
     }
 }
 
-fn joint_from(m: [i32; 3]) -> Joint {
-    Joint {
-        x: m[0],
-        y: m[1],
-        z_mm: m[2].max(0) as u16,
-    }
-}
-
 /// Raw (pre-smoothing) joints handed to `publish`. `Pt(0,0)` means absent.
 #[derive(Default)]
 struct RawJoints<'a> {
     head: Pt,
     l_shoulder: Pt,
     r_shoulder: Pt,
+    l_elbow: Pt,
+    r_elbow: Pt,
     l_hand: Pt,
     r_hand: Pt,
     center: Pt,

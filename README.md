@@ -52,7 +52,7 @@ wasn't found this frame:
 | `head` | top of the head |
 | `left_shoulder`, `right_shoulder` | shoulders |
 | `left_hand`, `right_hand` | hands (outermost silhouette points) |
-| `left_elbow`, `right_elbow` | elbows — *roadmap, always `None` for now* |
+| `left_elbow`, `right_elbow` | elbows (straight-arm midpoint or arm bend) |
 | `center` | silhouette centroid (torso anchor) |
 
 Each `Joint` is a full-resolution pixel plus depth: `{ x, y, z_mm }`.
@@ -73,18 +73,21 @@ if let (Some(l), Some(r)) = (skel.left_hand, skel.right_hand) {
 1. **Segment**: keep the near depth slab `[closest, closest + slab_mm]` as
    foreground → a binary silhouette. *(The only depth-dependent stage.)*
 2. **Isolate**: keep the largest connected component (drops bystanders/speckle).
-3. **Extremities**: relative to the body's centre column, the **head** is the
-   highest silhouette pixel and the **hands** are the outermost pixels in the
-   left/right quadrants; **shoulders** drop from the head column to the edge.
-4. **Smooth**: a short per-joint temporal median rejects single-frame outliers.
+3. **Thin**: Zhang-Suen skeletonization → a 1-px medial skeleton whose endpoints
+   are the limb tips.
+4. **Joints**: relative to the body's centre column, the **head** is the highest
+   skeleton point and the **hands** are the outermost branch tips; **shoulders**
+   drop from the head column to the silhouette edge; each **elbow** is the
+   straight-arm midpoint, or the arm's bend point when the arm is folded.
+5. **Smooth**: a short per-joint temporal median rejects single-frame outliers.
 
 ### Status / roadmap
 
-Working: **head, shoulders, hands, body centre**, with temporal smoothing.
-Not yet ported: **elbows** (arm-curve angle tracking); **adaptive slab**;
-optional **geodesic head selection** (connectivity to the body mass). The tuning
-constants mirror a frontal camera and will want retuning for very different
-placements.
+Working: **head, shoulders, elbows, hands, body centre**, with temporal
+smoothing — the full upper-body joint set of the original. Not yet ported:
+**adaptive slab** and an optional **geodesic head selection** (connectivity to
+the body mass). The tuning constants mirror a frontal camera and will want
+retuning for very different placements.
 
 <a id="français"></a>
 
@@ -124,7 +127,7 @@ n'a pas été trouvée cette frame :
 | `head` | sommet de la tête |
 | `left_shoulder`, `right_shoulder` | épaules |
 | `left_hand`, `right_hand` | mains (points extrêmes de la silhouette) |
-| `left_elbow`, `right_elbow` | coudes — *roadmap, `None` pour l'instant* |
+| `left_elbow`, `right_elbow` | coudes (milieu du bras tendu ou coude du bras plié) |
 | `center` | centroïde de la silhouette (ancre torse) |
 
 Chaque `Joint` est un pixel pleine résolution + profondeur : `{ x, y, z_mm }`.
@@ -136,17 +139,21 @@ via des intrinsèques sténopé.
 1. **Segmenter** : garder la tranche proche `[proche, proche + slab_mm]` comme
    avant-plan → silhouette binaire. *(Seule étape dépendante de la profondeur.)*
 2. **Isoler** : garder la plus grande composante connexe (vire spectateurs/bruit).
-3. **Extrémités** : par rapport à la colonne centrale du corps, la **tête** est
-   le pixel le plus haut et les **mains** les pixels les plus externes des
-   quadrants gauche/droite ; les **épaules** descendent de la tête jusqu'au bord.
-4. **Lisser** : une médiane temporelle courte par joint rejette les aberrations.
+3. **Amincir** : squelettisation Zhang-Suen → un squelette médian de 1 px dont
+   les extrémités sont les bouts des membres.
+4. **Joints** : par rapport à la colonne centrale, la **tête** est le point le
+   plus haut du squelette et les **mains** les bouts de branches les plus
+   externes ; les **épaules** descendent de la tête jusqu'au bord ; chaque
+   **coude** est le milieu du bras tendu, ou le coude du bras plié.
+5. **Lisser** : une médiane temporelle courte par joint rejette les aberrations.
 
 ### État / roadmap
 
-Fonctionne : **tête, épaules, mains, centre du corps**, avec lissage temporel.
-Pas encore porté : **coudes** (suivi d'angle du bras) ; **slab adaptatif** ;
-option **tête géodésique** (connexité à la masse corps). Les constantes de tuning
-reflètent une caméra frontale et demanderont un réglage pour d'autres placements.
+Fonctionne : **tête, épaules, coudes, mains, centre du corps**, avec lissage
+temporel — le jeu complet de joints haut-du-corps de l'original. Pas encore
+porté : **slab adaptatif** et option **tête géodésique** (connexité à la masse
+corps). Les constantes de tuning reflètent une caméra frontale et demanderont un
+réglage pour d'autres placements.
 
 ---
 
