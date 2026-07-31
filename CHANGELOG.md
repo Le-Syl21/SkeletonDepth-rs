@@ -6,6 +6,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+- **Adaptive depth slab** (`Config::slab_spread_divisor`): the near slab now
+  thickens away from the closest point, letting the body spread in depth as it
+  widens — the last piece of the original's `SkeletonDepth`. `0` keeps a fixed
+  slab.
+- Exposed the remaining hard-coded tuning scalars on `Config`:
+  `hand_far_factor` (was the internal `2.8`) and `shift` (was the `SHIFT = 50`
+  constant), so a different camera geometry can be tuned without recompiling.
+
+### Changed
+- `segment::segment` gained a `spread_divisor` argument.
+- `Config` gained fields (`slab_spread_divisor`, `hand_far_factor`, `shift`) —
+  construct it with `..Config::default()` to stay forward-compatible.
+
 ## [0.2.0]
 
 ### Added

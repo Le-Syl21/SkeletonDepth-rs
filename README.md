@@ -81,13 +81,23 @@ if let (Some(l), Some(r)) = (skel.left_hand, skel.right_hand) {
    straight-arm midpoint, or the arm's bend point when the arm is folded.
 5. **Smooth**: a short per-joint temporal median rejects single-frame outliers.
 
+### Tuning
+
+Everything is driven by a public `Config` with documented fields — no recompiling
+to adapt to a different camera: the depth slab (`slab_mm`) and its adaptive
+thickening (`slab_spread_divisor`), the head-column width (`afa`), the shoulder
+scan offsets (`shoulder_drop`, `shoulder_inset`), the hand reach
+(`hand_far_factor`), the hand/elbow tolerance (`shift`), spur pruning
+(`min_region_px`) and the smoothing window (`history`). Defaults mirror the
+original's frontal-camera tuning.
+
 ### Status / roadmap
 
 Working: **head, shoulders, elbows, hands, body centre**, with temporal
-smoothing — the full upper-body joint set of the original. Not yet ported:
-**adaptive slab** and an optional **geodesic head selection** (connectivity to
-the body mass). The tuning constants mirror a frontal camera and will want
-retuning for very different placements.
+smoothing — the full upper-body joint set of the original, plus the adaptive
+depth slab. Only enhancement left: an optional **geodesic head selection**
+(connectivity to the body mass). The default constants mirror a frontal camera
+and will want retuning for very different placements.
 
 <a id="français"></a>
 
@@ -147,13 +157,24 @@ via des intrinsèques sténopé.
    **coude** est le milieu du bras tendu, ou le coude du bras plié.
 5. **Lisser** : une médiane temporelle courte par joint rejette les aberrations.
 
+### Réglages
+
+Tout passe par un `Config` public aux champs documentés — pas besoin de
+recompiler pour s'adapter à une autre caméra : la tranche de profondeur
+(`slab_mm`) et son épaississement adaptatif (`slab_spread_divisor`), la largeur
+de la colonne tête (`afa`), les offsets du scan d'épaules (`shoulder_drop`,
+`shoulder_inset`), la portée des mains (`hand_far_factor`), la tolérance
+main/coude (`shift`), l'élagage des spurs (`min_region_px`) et la fenêtre de
+lissage (`history`). Les défauts reflètent le réglage caméra-frontale de
+l'original.
+
 ### État / roadmap
 
 Fonctionne : **tête, épaules, coudes, mains, centre du corps**, avec lissage
-temporel — le jeu complet de joints haut-du-corps de l'original. Pas encore
-porté : **slab adaptatif** et option **tête géodésique** (connexité à la masse
-corps). Les constantes de tuning reflètent une caméra frontale et demanderont un
-réglage pour d'autres placements.
+temporel — le jeu complet de joints haut-du-corps de l'original, plus le slab de
+profondeur adaptatif. Seule amélioration restante : option **tête géodésique**
+(connexité à la masse corps). Les constantes par défaut reflètent une caméra
+frontale et demanderont un réglage pour d'autres placements.
 
 ---
 

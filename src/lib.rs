@@ -1,16 +1,16 @@
 //! Upper-body skeleton tracking from a depth silhouette — pure Rust, no OpenCV,
 //! no OpenNI, no machine-learning model.
 //!
-//! Feed a depth frame (millimeters) and get back the **head, shoulders and
-//! hands** of the person standing closest to the camera. The pipeline is:
+//! Feed a depth frame (millimeters) and get back the **head, shoulders, elbows
+//! and hands** of the person standing closest to the camera. The pipeline is:
 //!
-//! 1. [`segment::segment`]: keep the near depth slab → a binary silhouette
-//!    [`mask::Mask`].
+//! 1. [`segment::segment`]: keep the (adaptive) near depth slab → a binary
+//!    silhouette [`mask::Mask`].
 //! 2. [`mask::Mask::keep_largest_region`]: drop bystanders and speckle.
-//! 3. [`detect::locate_extremities`]: the head is the highest silhouette pixel
-//!    above the body centre; the hands are the outermost pixels in the
-//!    left/right quadrants.
-//! 4. per-joint temporal median smoothing ([`smooth::MedianRing`]).
+//! 3. [`mask::Mask::thinned`]: Zhang-Suen skeletonization → limb-tip endpoints.
+//! 4. [`detect::locate_extremities`] + the joint rules: head, shoulders, hands,
+//!    elbows relative to the body centre.
+//! 5. per-joint temporal median smoothing ([`smooth::MedianRing`]).
 //!
 //! It is a from-scratch Rust reimplementation of the method in
 //! [`derzu/BodySkeletonTracker`](https://github.com/derzu/BodySkeletonTracker)
@@ -76,8 +76,7 @@ impl Joint {
 }
 
 /// The upper-body skeleton for one frame. Every joint is `Option` — absent when
-/// that part wasn't found. Elbows are not computed yet (always `None`); see the
-/// crate README roadmap.
+/// that part wasn't found this frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Skeleton {
     pub head: Option<Joint>,
@@ -109,9 +108,21 @@ pub struct Config {
     pub shoulder_drop: i32,
     /// "Go inside the arm" vertical nudge applied to shoulders (sub-sampled rows).
     pub shoulder_inset: i32,
+    /// Adaptive-slab thickening rate: the near slab grows by
+    /// `(|dx| + |dy|) / slab_spread_divisor` millimeters at a pixel `dx, dy`
+    /// away (in image space) from the nearest point, so the body can spread in
+    /// depth as it widens. `5` matches the original; `0` disables it (fixed
+    /// `slab_mm`); larger = less spread.
+    pub slab_spread_divisor: u32,
     /// Thinned-skeleton components smaller than this (pixels) are pruned as spurs
     /// before the extremity scan (`removeSmallsRegions`).
     pub min_region_px: u32,
+    /// Hand-detection reach: the outermost extremity is taken as a hand once it
+    /// is more than `afa * subsample * hand_far_factor` pixels past the body
+    /// centre (the original's `afa28`, `2.8`). Lower = hands accepted sooner.
+    pub hand_far_factor: f32,
+    /// Vertical tolerance (full-res px) in the hand-vs-elbow rules (`shift = 50`).
+    pub shift: i32,
     /// Temporal median window (frames) per joint.
     pub history: usize,
 }
@@ -124,15 +135,14 @@ impl Default for Config {
             afa: 0,
             shoulder_drop: 30,
             shoulder_inset: 10,
+            slab_spread_divisor: 5,
             min_region_px: 6,
+            hand_far_factor: 2.8,
+            shift: 50,
             history: 5,
         }
     }
 }
-
-/// Horizontal "shift" tolerance used by the hand-selection rules (full-res px),
-/// matching the original's `shift = 50`.
-const SHIFT: i32 = 50;
 
 /// Stateful tracker. Holds per-joint smoothing history across frames; create one
 /// per camera and call [`Tracker::track`] each frame.
@@ -163,7 +173,7 @@ impl Tracker {
     pub fn new(w: usize, h: usize, cfg: Config) -> Self {
         let sub = cfg.subsample.max(1) as i32;
         let afa = if cfg.afa > 0 { cfg.afa } else { 70 / sub };
-        let afa28 = afa as f32 * sub as f32 * 2.8;
+        let afa28 = afa as f32 * sub as f32 * cfg.hand_far_factor;
         let rings = std::array::from_fn(|_| MedianRing::new(cfg.history));
         Self {
             w,
@@ -183,7 +193,14 @@ impl Tracker {
         assert_eq!(depth_mm.len(), self.w * self.h, "depth frame size mismatch");
         let sub = self.cfg.subsample.max(1);
         // Silhouette from the near depth slab, then the shared detection core.
-        match segment::segment(depth_mm, self.w, self.h, sub, self.cfg.slab_mm) {
+        match segment::segment(
+            depth_mm,
+            self.w,
+            self.h,
+            sub,
+            self.cfg.slab_mm,
+            self.cfg.slab_spread_divisor,
+        ) {
             Some(seg) => self.detect_from_mask(seg.mask, Some(depth_mm)),
             None => self.publish(RawJoints::default()),
         }
@@ -248,7 +265,7 @@ impl Tracker {
             center_full,
             r_shoulder,
             self.afa28,
-            SHIFT,
+            self.cfg.shift,
         );
         let l_hand = pick_left_hand(
             max_left,
@@ -257,7 +274,7 @@ impl Tracker {
             center_full,
             l_shoulder,
             self.afa28,
-            SHIFT,
+            self.cfg.shift,
         );
 
         // Elbows: straight-arm midpoint, or the arm-skeleton bend point.
